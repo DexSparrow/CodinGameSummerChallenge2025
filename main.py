@@ -1,8 +1,6 @@
 import sys
 import math
 
-# Win the water fight by controlling the most territory, or out-soak your opponent!
-
 class Entity:
     x:int
     y:int
@@ -19,6 +17,11 @@ class Entity:
 
     def __str__(self):
         return f"{self.x} {self.y}"
+
+    def __eq__(self, value):
+        if isinstance(value, Entity):
+            return self.x == value.x and self.y == value.y
+        return False
 
 class Rect:
     left: int
@@ -88,21 +91,17 @@ class MyEngine():
     canvas : Rect
 
     @classmethod
-    def assign_target(cls, agents:dict, targets:list):
+    def assign_target(cls, agents:dict, targets:list[Entity]):
         squad_dist_target = {} # [{agent_1: [[targets_1, dist], [targets_2, dist]]}]
         # we gonna form first the agent-dist-target relations
-        min_target_dist = None
         for _agent in agents:
             agent = agents[_agent]
             agent_dist_target = []
-            for _x in range(len(targets)):
-                target_dist = agent.dist(Entity(targets[_x][0], targets[_x][1]))
+            for target in range(len(targets)):
+                target_dist = agent.dist(target)
                 agent_dist_target += [
-                    [target_dist, targets[_x]]
+                    [target_dist, target]
                 ]
-                if min_target_dist == None:
-                    min_target_dist = target_dist
-                min_target_dist = min(min_target_dist, target_dist)
             
             squad_dist_target[agent.agent_id]=sorted(agent_dist_target)
         res = []
@@ -116,14 +115,14 @@ class MyEngine():
                     mini = agent_id
             res += [[mini, squad_dist_target[mini][0][1]]]
             remove_target = squad_dist_target[mini][0][1]
-            del(squad_dist_target[mini])
-            for agent_id in squad_dist_target:
-                squad_dist_target[agent_id] = [dist for dist in squad_dist_target[agent_id] if dist[1] != remove_target]
-            new_squad_dist_target = {}
-            for agent_id in squad_dist_target:
-                if squad_dist_target[agent_id] != []:
-                    new_squad_dist_target[agent_id] = squad_dist_target[agent_id] 
-            squad_dist_target = new_squad_dist_target
+            squad_dist_target.pop(mini)
+
+            for agent_id in squad_dist_target.copy():
+                if [agents[agent_id].dist(remove_target), remove_target] in squad_dist_target[agent_id]:
+                    squad_dist_target[agent_id].remove([agents[agent_id].dist(remove_target), remove_target])
+                if squad_dist_target[agent_id] == []:
+                    squad_dist_target.pop(agent_id)
+
         return res
 
     @classmethod
@@ -131,7 +130,6 @@ class MyEngine():
         # targets are Agent
         squad_dist_target = {} # [{agent_1: [[targets_1, dist], [targets_2, dist]]}]
         # we gonna form first the agent-dist-target relations
-        min_target_dist = None
         for _agent in agents:
             agent = agents[_agent]
             agent_dist_target = []
@@ -140,9 +138,6 @@ class MyEngine():
                 agent_dist_target += [
                     [target_dist, targets[_x]]
                 ]
-                if min_target_dist == None:
-                    min_target_dist = target_dist
-                min_target_dist = min(min_target_dist, target_dist)
             
             squad_dist_target[agent.agent_id]=sorted(agent_dist_target)
         res = []
@@ -157,16 +152,17 @@ class MyEngine():
             for agent_id in squad_dist_target.copy():
                 if squad_dist_target[agent_id][0][0] == min_target_dist:
                     res += [[agent_id, squad_dist_target[agent_id][0][1].agent_id]]
-                    remove_target = squad_dist_target[agent_id][0][1]
+                    if squad_dist_target[agent_id][0][1] not in remove_target:
+                        remove_target += [ squad_dist_target[agent_id][0][1] ]
                     squad_dist_target.pop(agent_id)
 
-            for agent_id in squad_dist_target:
-                squad_dist_target[agent_id] = [dist for dist in squad_dist_target[agent_id] if dist[1] not in remove_target]
-            new_squad_dist_target = {}
-            for agent_id in squad_dist_target:
-                if squad_dist_target[agent_id] != []:
-                    new_squad_dist_target[agent_id] = squad_dist_target[agent_id] 
-            squad_dist_target = new_squad_dist_target
+            for agent_id in squad_dist_target.copy():
+                for remove in remove_target:
+                    if [agents[agent_id].dist(remove), remove] in squad_dist_target[agent_id]:
+                        squad_dist_target[agent_id].remove([agents[agent_id].dist(remove), remove])
+                if squad_dist_target[agent_id] == []:
+                    squad_dist_target.pop(agent_id)
+
         return res        
 
     @classmethod
@@ -281,19 +277,19 @@ while True:
             ennemy_squads.agents[agent_id].wetness = wetness
 
     my_agent_count = int(input())  # Number of alive agents controlled by you
-    # action = mysquads.assign_target([[6,1], [6,3]])
+    # action = mysquads.assign_target([Entity(6, 1), Entity(6, 3)])
     ennemy_attacking = MyEngine.assign_target_agent(ennemy_squads.agents, list(mysquads.agents.values()))
     my_predator = {}
     for ennemy, myagent in ennemy_attacking:
-        my_predator[mysquads.agents[myagent]] = (my_predator.get(mysquads.agents[myagent]) or []) + [ennemy_squads.agents[ennemy]] 
+        my_predator[myagent] = (my_predator.get(myagent) or []) + [ennemy_squads.agents[ennemy]] 
     # my_action = mysquads.assign_target_agent([[agent.x,agent.y] for agent in mysquads.agents.values()])
     hide_action = {}
     shoot_action = {}
     #Debug my_predator
     # print([[x.agent_id, [x.agent_id for x in my_predator[x]]] for x in my_predator])
     for myagent in my_predator: 
-        hide_spot = MyEngine.take_cover(myagent, cover, my_predator[myagent])
-        hide_action[myagent.agent_id]=hide_spot
+        hide_spot = MyEngine.take_cover(mysquads.agents[myagent], cover, my_predator[myagent])
+        hide_action[myagent]=hide_spot
 
         mytargets = []
         for predator in my_predator[myagent]:
@@ -301,14 +297,14 @@ while True:
             spots = MyEngine.get_ortho_spot(predator)
             # checking around enemy if there is cover
             for _spot in range(4): #up right down left
-                if [spots[_spot].x, spots[_spot].y] in [[_.x, _.y]for _ in cover_entity]:
-                    block = [c for c in cover if c.x==spots[_spot].x and c.y==spots[_spot].y][0]
-                    shield = MyEngine.get_coverage(cover=block, predator=myagent, dir_prey_cover=(_spot+2)%4) # reversing POV like if up -> down
+                if spots[_spot] in cover_entity:
+                    block = [c for c in cover if c == spots[_spot]][0]
+                    shield = MyEngine.get_coverage(cover=block, predator=mysquads.agents[myagent], dir_prey_cover=(_spot+2)%4) # reversing POV like if up -> down
                     ennemy_shield = max(ennemy_shield, shield and block.height or 0)
             mytargets += [[ennemy_shield, predator]]
         mytargets.sort(key=lambda x:x[0])
         mytarget = mytargets[0][1]
-        shoot_action[myagent.agent_id] = mytarget
+        shoot_action[myagent] = mytarget
 
     # for x in hide_action:
     #     print(f"{x} {hide_action[x]}")
