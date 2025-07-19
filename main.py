@@ -17,7 +17,7 @@ class Entity:
 
     def __str__(self):
         return f"{self.x} {self.y}"
-
+    
     def __eq__(self, value):
         if isinstance(value, Entity):
             return self.x == value.x and self.y == value.y
@@ -37,6 +37,9 @@ class Rect:
 
     def isEntityInsideMe(self, e: Entity):
         return e.x >= self.left and e.x <= self.right and e.y >= self.top and e.y <= self.down  
+
+    def __str__(self):
+        return f"Rect: {self.top} {self.right} {self.down} {self.down}"
 
 class Block(Entity):
     height: int
@@ -89,6 +92,88 @@ class Squad():
 
 class MyEngine():
     canvas : Rect
+    forbidden_spot: list[Entity]
+
+    @classmethod
+    def get_obstacle_around_agent(cls, agent: Agent, domain_surface_pad= 1):
+        obstacle = 0
+        domain = Rect(Entity(agent.x-domain_surface_pad, agent.y-domain_surface_pad), Entity(agent.x+domain_surface_pad, agent.y+domain_surface_pad))
+        # for y in range(domain.top, domain.down + 1):
+        #     for x in range(domain.left, domain.right + 1):
+        #         if Entity(x, y) in cls.forbidden_spot:
+        #             obstacle += 1
+        max_obstacle = 0
+        for y in range(1, domain.down - domain.top):
+            for x in range(1, domain.right  - domain.left):
+                Y = domain.top + y
+                X = domain.left + x                    
+                R = Rect(Entity(domain.left, domain.top), Entity(X, Y))
+                obstacle = 0
+                for _x in range(R.left, R.right+1):
+                    for _y in range(R.top, R.down+1):
+                        if Entity(_x, _y) in cls.forbidden_spot:
+                            obstacle += 1
+                max_obstacle = max(max_obstacle, obstacle)
+        return max_obstacle
+
+
+    @classmethod
+    # this method is not good yet
+    def isagentTrapped(cls, agent: Agent, domain_size=1, forbidden_spot=[]):
+        forbidden = cls.forbidden_spot + forbidden_spot
+        for surface in range(1, domain_size+1):
+            domain = Rect(Entity(agent.x-surface, agent.y-surface), Entity(agent.x+surface, agent.y+surface))
+            obstacle = 0
+            for x in range(domain.left, domain.right+1):
+                if Entity(x, domain.top) in forbidden:
+                    obstacle += 1
+                if Entity(x, domain.down) in forbidden:
+                    obstacle += 1
+
+            for y in range(domain.top, domain.down + 1):
+                if Entity(domain.right, y) in forbidden:
+                    obstacle += 1
+                if Entity(domain.left, y) in forbidden:
+                    obstacle += 1
+            perimeter = ((domain.right - domain.left+1) + (domain.down - domain.top+1))*2 - 4
+            # print(f"{agent.agent_id}:[{surface}] [{perimeter}]{obstacle}", file=sys.stderr, flush=True)
+            if obstacle == perimeter:
+                return 1
+        return 0
+
+    @classmethod
+    def assign_target_for_multiple_kill(cls, agents: dict, targets:list[Agent], dont_move_zone: list[Rect]=[]):
+        target_and_victim = []
+        for target in targets:
+            victim = 1
+            for y in range(-1,2):
+                for x in range(-1,2):
+                    _entity = Entity(target.x+x, target.y+y)
+                    if _entity != target and _entity in targets:
+                        victim += 1
+            target_and_victim += [[victim, target]]
+        target_and_victim.sort(key=lambda x:-x[0])
+        target_and_victim_copy = target_and_victim.copy()
+        res = []
+        # forbidden_spot = [Entity(target.x, target.y) for target in targets]
+        for agent_id in agents:
+            print(f"{agent_id} {agents[agent_id]} {cls.get_obstacle_around_agent(agents[agent_id], domain_surface_pad = 3)}", file = sys.stderr, flush=True)
+            forbid = 0
+            for dont_move in dont_move_zone:
+                if dont_move.isEntityInsideMe(Entity(agents[agent_id].x, agents[agent_id].y)):
+                    forbid = 1
+                    break
+            
+            if forbid:
+                res += [[agent_id, None]]
+                continue
+
+            if len(target_and_victim):
+                res += [[agent_id, target_and_victim[0][1]]]
+                target_and_victim.remove(target_and_victim[0])
+            else:
+                res += [[agent_id, target_and_victim_copy[0][1]]]
+        return res
 
     @classmethod
     def assign_target(cls, agents:dict, targets:list[Entity]):
@@ -139,7 +224,7 @@ class MyEngine():
                     [target_dist, targets[_x]]
                 ]
             
-            squad_dist_target[agent.agent_id]=sorted(agent_dist_target)
+            squad_dist_target[agent.agent_id]=sorted(agent_dist_target, key=lambda x:x[0])
         res = []
         while len(squad_dist_target):
             mini = list(squad_dist_target.keys())[0] # Take the first agent as minima
@@ -246,6 +331,12 @@ cover = [] # Block object list of obstacles
 cover_entity = [] # Entity objct list of obstacles
 
 width, height = [int(i) for i in input().split()]
+
+MyEngine.canvas = Rect(Entity(0,0), Entity(width-1, height-1))
+MyEngine.forbidden_spot = []
+
+
+
 for i in range(height):
     inputs = input().split()
     for j in range(width):
@@ -257,17 +348,29 @@ for i in range(height):
         if tile_type != 0:
             cover += [Block(x=x, y=y, height=tile_type)]
             cover_entity += [Entity(x=x, y=y)]
+            MyEngine.forbidden_spot += [Entity(x=x, y=y)]
 # cover.sort(key=lambda c:-c.height)
 # game loop
-MyEngine.canvas = Rect(Entity(0,0), Entity(width-1, height-1))
+
+dont_move_zone = []
+for corner in [
+    [0,0],
+    [MyEngine.canvas.right - 4, 0],
+    [MyEngine.canvas.right - 4, MyEngine.canvas.down - 4],
+    [0, MyEngine.canvas.down - 4],
+]:
+    x,y = corner
+    rect = Rect(Entity(x, y), Entity(x+4, y+4))
+    dont_move_zone += [rect]
 
 while True:
     agent_count = int(input())  # Total number of agents still in the game
+    checking_survival = []
     for i in range(agent_count):
         # cooldown: Number of turns before this agent can shoot
         # wetness: Damage (0-100) this agent has taken
         agent_id, x, y, cooldown, splash_bombs, wetness = [int(j) for j in input().split()]
-
+        checking_survival += [agent_id]
         # update data
         if mysquads.is_agent_member(agent_id):
             mysquads.update_agent_coord(agent_id, x,y)
@@ -275,46 +378,58 @@ while True:
         else:
             ennemy_squads.update_agent_coord(agent_id, x,y)
             ennemy_squads.agents[agent_id].wetness = wetness
+    
+    for myagent_id in mysquads.agents.copy():
+        if mysquads.agents[myagent_id].agent_id not in checking_survival:
+            mysquads.eliminate_agent(myagent_id)
+
+    for ennemy_agent_id in ennemy_squads.agents.copy():
+        if ennemy_squads.agents[ennemy_agent_id].agent_id not in checking_survival:
+            ennemy_squads.eliminate_agent(ennemy_agent_id)
 
     my_agent_count = int(input())  # Number of alive agents controlled by you
     # action = mysquads.assign_target([Entity(6, 1), Entity(6, 3)])
-    ennemy_attacking = MyEngine.assign_target_agent(ennemy_squads.agents, list(mysquads.agents.values()))
-    my_predator = {}
-    for ennemy, myagent in ennemy_attacking:
-        my_predator[myagent] = (my_predator.get(myagent) or []) + [ennemy_squads.agents[ennemy]] 
-    # my_action = mysquads.assign_target_agent([[agent.x,agent.y] for agent in mysquads.agents.values()])
-    hide_action = {}
-    shoot_action = {}
-    #Debug my_predator
-    # print([[x.agent_id, [x.agent_id for x in my_predator[x]]] for x in my_predator])
-    for myagent in my_predator: 
-        hide_spot = MyEngine.take_cover(mysquads.agents[myagent], cover, my_predator[myagent])
-        hide_action[myagent]=hide_spot
+    move_action = {}
+    throw_action = {}
+    throw_action_agents = MyEngine.assign_target_for_multiple_kill(mysquads.agents, list(ennemy_squads.agents.values()), dont_move_zone=dont_move_zone)
+    for agent_id, target in throw_action_agents:
+        throw_action[agent_id] = target
+    # my_targets = MyEngine.assign_target_agent(mysquads.agents, list(ennemy_squads.agents.values()))
+    for x in throw_action:
+        print(f"{x} {throw_action[x]}", file=sys.stderr, flush=True)
 
-        mytargets = []
-        for predator in my_predator[myagent]:
-            ennemy_shield = 0
-            spots = MyEngine.get_ortho_spot(predator)
-            # checking around enemy if there is cover
-            for _spot in range(4): #up right down left
-                if spots[_spot] in cover_entity:
-                    block = [c for c in cover if c == spots[_spot]][0]
-                    shield = MyEngine.get_coverage(cover=block, predator=mysquads.agents[myagent], dir_prey_cover=(_spot+2)%4) # reversing POV like if up -> down
-                    ennemy_shield = max(ennemy_shield, shield and block.height or 0)
-            mytargets += [[ennemy_shield, predator]]
-        mytargets.sort(key=lambda x:x[0])
-        mytarget = mytargets[0][1]
-        shoot_action[myagent] = mytarget
+    for myagent_id, target in throw_action_agents:
+        if not target:
+            move_action[myagent_id] = None
+            continue
 
-    # for x in hide_action:
-    #     print(f"{x} {hide_action[x]}")
-    # for x in shoot_action:
-    #     print(f"{x} {shoot_action[x]}")
-    # shoot_on = ennemy_squads.rank_wetness()[-1]
+        agent = mysquads.agents[myagent_id]
+        domain = Rect(Entity(target.x - 4, target.y - 4), Entity(target.x + 4 , target.y + 4))
+        valid_spot = []
+        for y in range(domain.top, domain.down+1):
+            for x in range(domain.left, domain.right+1):
+                _entity = Entity(x, y)
+                if _entity != target and _entity.dist(target) <= 4 and _entity not in cover_entity and MyEngine.canvas.isEntityInsideMe(_entity):
+                    valid_spot += [_entity]
+        valid_spot.sort(key=lambda x:x.dist(agent))
+
+        if len(valid_spot) and agent != valid_spot[0]:
+            move_action[myagent_id] = valid_spot[0]
+        else:
+            move_action[myagent_id] = None
+
     for agent_id in mysquads.agents.keys():
-        shoots = f"SHOOT {shoot_action[agent_id].agent_id}"
-        move = f"MOVE {hide_action[agent_id]}"
-        actions = [move , shoots]
+        actions = []
+        if move_action[agent_id]:
+            move = f"MOVE {move_action[agent_id]}"
+            actions += [move]
+        # if Entity(mysquads.agents[agent_id].x , mysquads.agents[agent_id].y) == move_action[agent_id]:
+        elif throw_action[agent_id]:
+            shoots = f"THROW {throw_action[agent_id].__str__()}"
+            actions += [shoots]
+        else:
+            actions += ["WAIT"]
+        
         print(f"{agent_id}; {'; '.join(actions)}")
         # agent = action[i][0]
         # target = action[i][1]
@@ -323,10 +438,3 @@ while True:
         # shoot_on.wetness += mysquads.agents[agent_id].soaking_power
         # print(f"{agent_id};  SHOOT {shoot_on.agent_id}")
     
-    # remove died agent
-    for agent_id in ennemy_squads.agents.copy():
-        if ennemy_squads.agents[agent_id].wetness >= 100:
-            ennemy_squads.eliminate_agent(agent_id)
-    for agent_id in mysquads.agents.copy():
-        if mysquads.agents[agent_id].wetness >= 100:
-            mysquads.eliminate_agent(agent_id)
