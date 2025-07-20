@@ -81,7 +81,7 @@ class Agent(Entity):
     def getDomain(self, domain_size=None):
         # get an agent domain like territory
         if domain_size==None:
-            domain_size = self.optimal_range
+            domain_size = self.optimal_range * 2
         return Rect(Entity(self.x - domain_size, self.y - domain_size), Entity(self.x + domain_size, self.y + domain_size))
 
 class Squad():
@@ -165,10 +165,6 @@ class MyEngine():
     def get_obstacle_around_agent(cls, agent: Agent, domain_surface_pad= 1):
         obstacle = 0
         domain = Rect(Entity(agent.x-domain_surface_pad, agent.y-domain_surface_pad), Entity(agent.x+domain_surface_pad, agent.y+domain_surface_pad))
-        # for y in range(domain.top, domain.down + 1):
-        #     for x in range(domain.left, domain.right + 1):
-        #         if Entity(x, y) in cls.forbidden_spot:
-        #             obstacle += 1
         max_obstacle = 0
         for y in range(1, domain.down - domain.top):
             for x in range(1, domain.right  - domain.left):
@@ -223,9 +219,10 @@ class MyEngine():
                         victim += 1
                     if _entity in friend:
                         collateral += 1
-            if collateral < victim:
-                if max_target_victim == None or max_target_victim[0] > victim:
-                    max_target_victim = [victim, target]
+            if collateral >= victim:
+                return None
+            if max_target_victim == None or max_target_victim[0] > victim:
+                max_target_victim = [victim, target]
 
         return max_target_victim
 
@@ -368,17 +365,34 @@ class MyEngine():
         return 0
 
     @classmethod
-    def get_ortho_spot(cls, spot):
+    def get_ortho_spot(cls, spot)->list[Entity]:
         return [Entity(spot.x + x, spot.y + y) for x,y in [[0,-1],[1,0], [0,1], [-1,0]]]
 
     @classmethod
     def take_best_spot(cls, cover:Block, forbidden_spot:list[Entity], predators: list[Agent]):
         blind_spots = []
 
-        up_cover = Rect(Entity(cover.x-2, cover.y-1), Entity(cover.x+2, cover.y-3))
-        right_cover = Rect(Entity(cover.x-1, cover.y-2), Entity(cover.x-3, cover.y+2))
-        down_cover = Rect(Entity(cover.x+2, cover.y+1), Entity(cover.x-2, cover.y+3))
-        left_cover = Rect(Entity(cover.x+1, cover.y-2), Entity(cover.x+3, cover.y+2))
+        # up_cover = Rect(Entity(cover.x-2, cover.y-1), Entity(cover.x+2, cover.y-3))
+        # right_cover = Rect(Entity(cover.x-1, cover.y-2), Entity(cover.x-3, cover.y+2))
+        # down_cover = Rect(Entity(cover.x+2, cover.y+1), Entity(cover.x-2, cover.y+3))
+        # left_cover = Rect(Entity(cover.x+1, cover.y-2), Entity(cover.x+3, cover.y+2))
+        predator_squad = {}
+        for predator in predators:
+            predator_squad[predator.agent_id] = predator
+        predator_squad = Squad(predator_squad)
+        ortho_predator_squad = predator_squad.getOrthoPeripheral()
+
+        up_cover,right_cover,down_cover,left_cover = [None]*4
+
+        if ortho_predator_squad["top"].y < cover.y-1:
+            up_cover = Rect(Entity(min(cover.x, ortho_predator_squad["left"].x), cover.y - 2), Entity(max(cover.x, ortho_predator_squad["right"].x), ortho_predator_squad["top"].y))
+        if ortho_predator_squad["right"].x > cover.x+1:
+            right_cover = Rect(Entity(cover.x+2, min(cover.y, ortho_predator_squad["top"].y)), Entity(ortho_predator_squad["right"].x, max(cover.y, ortho_predator_squad["down"].y)))
+        if ortho_predator_squad["down"].y > cover.y+1:            
+            down_cover = Rect(Entity(max(cover.x, ortho_predator_squad["right"].x), cover.y + 1), Entity(min(cover.x, ortho_predator_squad["left"].x), ortho_predator_squad["down"].y))
+        if ortho_predator_squad["left"].x < cover.x-1:
+            right_cover = Rect(Entity(cover.x - 2, max(cover.y, ortho_predator_squad["down"].y)), Entity(ortho_predator_squad["left"].x, min(cover.y, ortho_predator_squad["top"].y)))
+
 
         ortho_cover = [up_cover, right_cover, down_cover, left_cover]
 
@@ -386,18 +400,20 @@ class MyEngine():
         # up right down left
         ortho_spot = cls.get_ortho_spot(cover)
         for _spot in range(4):
+            if ortho_cover[_spot] == None:
+                continue
             spot = ortho_spot[_spot]
             if spot not in forbidden_spot and cls.canvas.isEntityInsideMe(spot):
                 blind_spot = 0
                 for predator in predators:
                     if cover.pythagore_dist(predator) > 2 and ortho_cover[_spot].isEntityInsideMe(predator):
                         blind_spot += 1               
-                blind_spots += [[blind_spot, spot]]
+                blind_spots += [[blind_spot, _spot]]
         
         if not len(blind_spots):return None
         blind_spots.sort(key=lambda x:-x[0]) # Most blind spot
-        return blind_spots[0][1]
-
+        _spot = (blind_spots[0][1]+2)%4 # reverse side
+        return ortho_spot[_spot]
     @classmethod
     def take_cover(cls, agent:Agent, cover:list[Block], predators:list[Agent]):
         # predators : list of Agent attacking me#
@@ -513,10 +529,6 @@ while True:
 
     
     available_places = MyEngine.computeNotControlledZone(MyEngine.canvas, mysquads.getOrthoPeripheral(), ennemy_squads.getOrthoPeripheral())
-    if DEBUG >= 20:
-        for place in available_places:
-            print(f"{place}",file=sys.stderr, flush=True)
-        print(f"len={len(available_places)}",file=sys.stderr, flush=True)
     # available_places = MyEngine.substractZoneFromRect(MyEngine.canvas,my_territory)# + ennemy_territory)
     #available_places = [place for place in available_places if (place not in list(ennemy_squads.agents.values())) and (place not in cover) and (place not in list(mysquads.agents.values()))] # filter places
     # init territory
@@ -528,6 +540,7 @@ while True:
         for ennemy_id in ennemy_squads.agents:
             if agent_domain.isEntityInsideMe(ennemy_squads.agents[ennemy_id]):
                 ennemy_detected += [ennemy_squads.agents[ennemy_id]]
+        print(f"{agent_id} detected ennemy {[str(x.agent_id) for x in ennemy_detected]}", file=sys.stderr, flush=True)
 
         if len(ennemy_detected) > 0:
             can_shoot = mysquads.agents[agent_id].shoot_cooldown == 0
@@ -536,9 +549,11 @@ while True:
 
             # check if multiple kill
             if can_bomb:
-                victim, target = MyEngine.check_multiple_kill(ennemy_detected, list(mysquads.agents.values()))
-                if victim:
-                    weapon = f"THROW {target}"
+                res = MyEngine.check_multiple_kill(ennemy_detected, list(mysquads.agents.values()))
+                if res != None:
+                    victim, target = res
+                    if victim:
+                        weapon = f"THROW {target}"
 
             if (weapon == None):
                 if can_shoot:
@@ -546,11 +561,16 @@ while True:
                     weapon = f"SHOOT {ennemy_detected[target].agent_id}"
                 
                 else:
-                    agent_explorer[agent_id]=mysquads.agents[agent_id]
+                    # agent_explorer[agent_id]=mysquads.agents[agent_id]
+                    explore_action = MyEngine.assign_target({agent_id: mysquads.agents[agent_id]}, available_places)
+                    agent_id, target = explore_action[0]
+                    print(f"{agent_id}; MOVE {target}; HUNKER_DOWN")
                     continue
 
             hide = MyEngine.take_cover(mysquads.agents[agent_id], cover, ennemy_detected)
-
+            # debug-hide
+            print(f"{agent_id} hide to {hide}", file=sys.stderr, flush=True)
+            # debug-hide
             action = []
             if hide:
                 # MOVE
