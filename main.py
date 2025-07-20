@@ -412,65 +412,114 @@ while True:
             ennemy_squads.eliminate_agent(ennemy_agent_id)
     # update squad check survivor
 
+    ## init radar
+    most_right_agent = max([mysquads.agents[agent].x for agent in mysquads.agents])   
+    MyEngine.general_radar = Rect(Entity(most_right_agent, 0), Entity(most_right_agent + 7, MyEngine.canvas.down))
+    ennemy_radar_detected = {}
+    for ennemy in ennemy_squads.agents:
+        if MyEngine.general_radar.isEntityInsideMe(ennemy_squads.agents[ennemy]):
+            ennemy_radar_detected[ennemy] = ennemy_squads.agents[ennemy]
 
+    # action = mysquads.assign_target([Entity(6, 1), Entity(6, 3)])
+    # attack targetiing init
+    # myagent_target = MyEngine.assign_target_agent(mysquads.agents, list(ennemy_radar_detected.values()))
+    ennemy_attack = MyEngine.assign_target_agent(Squad(ennemy_radar_detected).agents, list(mysquads.agents.values()))
+    myagent_target = MyEngine.assign_target_agent(mysquads.agents, [ennemy_squads.agents[ennemy_id] for ennemy_id, agent_id in ennemy_attack ])
+    block_zone = []
+    for block in cover:
+        if MyEngine.general_radar.isEntityInsideMe(block):
+            block_zone += [block]
+    
+    # init predator : ennemy who targets my agents
+    my_predator = {}
+    for ennemy, myagent in ennemy_attack:
+        my_predator[myagent] = (my_predator.get(myagent) or []) + [ennemy_squads.agents[ennemy]] 
+    # init predator
+    
+    # init my hide action
+    hide_action = {}
 
+    for agent_id in mysquads.agents:
+        if not block_zone:break
 
+        if agent_id in my_predator:
+            hide = MyEngine.take_cover(mysquads.agents[agent_id], block_zone, my_predator[agent_id])
+            hide_action[agent_id] = hide
+    
+    # init my hide action
 
+    # init my attack
+    my_attacker = [agent_id for agent_id, ennemy_id in myagent_target]
+    attack_action = {}
+    for agent_id, ennemy_id in myagent_target:
+        attack_action[agent_id] = ennemy_id
+    # init my attack
 
+    # strategy decision
+    for agent_id in mysquads.agents:
+        # action = f"{agent_id}; "
+        actions = []
+        hide = hide_action.get(agent_id)
+        attack = attack_action.get(agent_id)
+        if attack:
+            if hide:
+                actions += [f"MOVE {hide}"]
+            actions += [f"SHOOT {attack}"]
+        else:
+            if hide:
+                actions += [f"MOVE {hide}"]
+            else:
+                # move forward basic
+                agent =mysquads.agents[agent_id]
+                actions += [f"MOVE {agent.x+2} {agent.y+2}"]
+        print(f"{agent_id}; {'; '.join(actions)}")
 
+    ## seems to be throw actions
+    # move_action = {}
+    # throw_action = {}
+    # throw_action_agents = MyEngine.assign_target_agent(mysquads.agents, list(ennemy_squads.agents.values()))
+    # for agent_id, target in throw_action_agents:
+    #     throw_action[agent_id] = target
+    # # my_targets = MyEngine.assign_target_agent(mysquads.agents, list(ennemy_squads.agents.values()))
+    # for x in throw_action:
+    #     print(f"{x} {throw_action[x]}", file=sys.stderr, flush=True)
 
+    # for myagent_id, target in throw_action_agents:
+    #     if not target:
+    #         move_action[myagent_id] = None
+    #         continue
 
+    #     agent = mysquads.agents[myagent_id]
+    #     domain = Rect(Entity(target.x - 4, target.y - 4), Entity(target.x + 4 , target.y + 4))
+    #     valid_spot = []
+    #     for y in range(domain.top, domain.down+1):
+    #         for x in range(domain.left, domain.right+1):
+    #             _entity = Entity(x, y)
+    #                 valid_spot += [_entity]
+    #     valid_spot.sort(key=lambda x:x.dist(agent))
 
+    #     if len(valid_spot) and agent != valid_spot[0]:
+    #         move_action[myagent_id] = valid_spot[0]
+    #     else:
+    #         move_action[myagent_id] = None
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    # for agent_id in mysquads.agents.keys():
+    #     actions = []
+    #     if move_action[agent_id]:
+    #         move = f"MOVE {move_action[agent_id]}"
+    #         actions += [move]
+    #     # if Entity(mysquads.agents[agent_id].x , mysquads.agents[agent_id].y) == move_action[agent_id]:
+    #     elif throw_action[agent_id]:
+    #         shoots = f"THROW {throw_action[agent_id].__str__()}"
+    #         actions += [shoots]
+    #     else:
+    #         actions += ["WAIT"]
+        
+        # print(f"{agent_id}; {'; '.join(actions)}")
+        # agent = action[i][0]
+        # target = action[i][1]
+        # print(f"{agent};  MOVE {target[0]} {target[1]}")
+        # agent_id --> shoot_on
+        # shoot_on.wetness += mysquads.agents[agent_id].soaking_power
+        # print(f"{agent_id};  SHOOT {shoot_on.agent_id}")
+    
