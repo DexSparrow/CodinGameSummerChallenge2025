@@ -1,0 +1,47 @@
+Control territory and attacking ennemy
+
+
+[Control territory]:
+    - Explore (left or right) (Squad context)
+        -> try to fill territory
+        -> go to territory not owned (rect filling)
+        
+        -> if my_domain detect ennemy_domain:
+            [ATTACK]
+    Loop [Control territory]
+
+    # Target assignation (Formation)(Just rank the agents)
+
+[ATTACK]:    
+    # can_attack
+
+    if not can_attack:
+        expand while avoid ennemy
+        -> break
+    
+    - Try to find spot and attack
+        (dir should be guessed using side-detection if agent.x < ennemy.x : ennemy on my left)
+        -> if not spot:
+            if agent_ennemy_count > 1:
+                - MOVE avoid ennemy(go to most free area)
+            else:
+                - MOVE (approach)
+                [attack]
+        -> else:
+            find spot and [attack]
+
+[attack]
+    # can_attack
+    # weapoon [shoot, throw] : sort depending on situation
+    # the agent have a target
+    - choose weapon:
+        -> if target.neighbour >= 1 or agent.isreloading:
+            bomb
+        -> else:
+            shoot
+        
+
+Each agent should have an domain (optimal_range):
+    - method Agent.getDomain() -> Rect
+
+

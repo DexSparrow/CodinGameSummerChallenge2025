@@ -1,6 +1,8 @@
 import sys
 import math
 
+BOMB_RANGE = 4
+class Entity:None
 class Entity:
     x:int
     y:int
@@ -9,7 +11,7 @@ class Entity:
         self.x = x
         self.y = y
 
-    def dist(self, B:object):# B: Entity
+    def dist(self, B:object)->int:# B: Entity
         return abs(self.x - B.x) + abs(self.y - B.y)
 
     def pythagore_dist(self, B:object):
@@ -23,6 +25,16 @@ class Entity:
             return self.x == value.x and self.y == value.y
         return False
 
+    def chooseNearestEntity(self, entities: list[Entity])->int:
+        min_entity = -1
+        min_dist = -1
+        for entity in range(len(entities)):
+            dist = self.dist(entities[entity])
+            if min_entity == None or dist < min_dist:
+                min_entity = entity
+                min_dist = dist
+        return min_entity
+    
 class Rect:
     left: int
     right: int
@@ -68,7 +80,7 @@ class Agent(Entity):
 
     def getDomain(self, domain_size=None):
         # get an agent domain like territory
-        if not domain_size:
+        if domain_size==None:
             domain_size = self.optimal_range
         return Rect(Entity(self.x - domain_size, self.y - domain_size), Entity(self.x + domain_size, self.y + domain_size))
 
@@ -95,11 +107,58 @@ class Squad():
     def eliminate_agent(self, agent_id:int):
         self.agents.pop(agent_id)
 
+    def getOrthoPeripheral(self)->dict:
+        # return top right down left
+        agents = list(self.agents.values())
+        agents.sort(key=lambda A:A.x)
+        left = agents[0]
+        right = agents[-1]
+        agents.sort(key=lambda A:A.y)
+        top = agents[0]
+        down = agents[0]
+
+        return {"top":top,"right":right,"down":down,"left":left}
+
+
 
 class MyEngine():
     canvas : Rect
     forbidden_spot: list[Entity]
     general_radar: Rect
+
+
+
+    @classmethod
+    def computeNotControlledZone(cls,zone:Rect, bluePeripheral:dict, redPeripheral:dict)->list[Entity]:
+        res = []
+        for y in range(zone.top, zone.down+1):
+            for x in range(zone.left, zone.right+1):
+                entity = Entity(x, y)
+                blue_distance = [] 
+                for direction in bluePeripheral:
+                    blue_distance += [bluePeripheral[direction].dist(entity)]
+                red_distance = [] 
+                for direction in redPeripheral:
+                    red_distance += [redPeripheral[direction].dist(entity)]
+                if min(blue_distance) >= min(red_distance):
+                    res += [entity]
+        return res
+
+    @classmethod
+    def substractZoneFromRect(cls, A: Rect, zones: list[Rect])->list[Entity]:
+        # get all avalaible places after removing zone
+        available_places = []
+        for y in range(A.top, A.down+1):
+            for x in range(A.left, A.right+1):
+                entity = Entity(x, y)
+                available = True
+                for zone in zones:
+                    if zone.isEntityInsideMe(entity):
+                        available = False
+                        break
+                if available:
+                    available_places += [entity]
+        return available_places
 
 
     @classmethod
@@ -149,6 +208,27 @@ class MyEngine():
                 return 1
         return 0
 
+
+    @classmethod
+    def check_multiple_kill(cls, targets: list[Agent], friend: list[Agent])->list:
+        max_target_victim = None
+        for target in targets:
+            rect = target.getDomain(domain_size=1)
+            victim = 0
+            collateral = 0
+            for y in range(rect.top, rect.down):
+                for x in range(rect.left, rect.right):
+                    _entity = Entity(x, y)
+                    if _entity != target and target in targets:
+                        victim += 1
+                    if _entity in friend:
+                        collateral += 1
+            if collateral < victim:
+                if max_target_victim == None or max_target_victim[0] > victim:
+                    max_target_victim = [victim, target]
+
+        return max_target_victim
+
     @classmethod
     def assign_target_for_multiple_kill(cls, agents: dict, targets:list[Agent], dont_move_zone: list[Rect]=[]):
         target_and_victim = []
@@ -197,19 +277,19 @@ class MyEngine():
         return res
 
     @classmethod
-    def assign_target(cls, agents:dict, targets:list[Entity]):
+    def assign_target(cls, agents:dict, targets:list[Entity])->list:
         squad_dist_target = {} # [{agent_1: [[targets_1, dist], [targets_2, dist]]}]
         # we gonna form first the agent-dist-target relations
         for _agent in agents:
             agent = agents[_agent]
             agent_dist_target = []
-            for target in range(len(targets)):
+            for target in targets:
                 target_dist = agent.dist(target)
                 agent_dist_target += [
                     [target_dist, target]
                 ]
             
-            squad_dist_target[agent.agent_id]=sorted(agent_dist_target)
+            squad_dist_target[agent.agent_id]=sorted(agent_dist_target, key=lambda x:x[0])
         res = []
         while len(squad_dist_target):
             mini = list(squad_dist_target.keys())[0] # Take the first agent as minima
@@ -313,6 +393,8 @@ class MyEngine():
                     if cover.pythagore_dist(predator) > 2 and ortho_cover[_spot].isEntityInsideMe(predator):
                         blind_spot += 1               
                 blind_spots += [[blind_spot, spot]]
+        
+        if not len(blind_spots):return None
         blind_spots.sort(key=lambda x:-x[0]) # Most blind spot
         return blind_spots[0][1]
 
@@ -385,6 +467,8 @@ for corner in [
     rect = Rect(Entity(x, y), Entity(x+4, y+4))
     dont_move_zone += [rect]
 
+DEBUG = 0
+
 while True:
     agent_count = int(input())  # Total number of agents still in the game
     checking_survival = []
@@ -397,9 +481,13 @@ while True:
         if mysquads.is_agent_member(agent_id):
             mysquads.update_agent_coord(agent_id, x,y)
             mysquads.agents[agent_id].wetness = wetness
+            mysquads.agents[agent_id].shoot_cooldown = cooldown
+            mysquads.agents[agent_id].splash_bomb = splash_bombs
         else:
             ennemy_squads.update_agent_coord(agent_id, x,y)
             ennemy_squads.agents[agent_id].wetness = wetness
+            ennemy_squads.agents[agent_id].shoot_cooldown = cooldown
+            ennemy_squads.agents[agent_id].splash_bomb = splash_bombs
     my_agent_count = int(input())  # Number of alive agents controlled by you
 
     # update squad check survivor
@@ -412,114 +500,76 @@ while True:
             ennemy_squads.eliminate_agent(ennemy_agent_id)
     # update squad check survivor
 
-    ## init radar
-    most_right_agent = max([mysquads.agents[agent].x for agent in mysquads.agents])   
-    MyEngine.general_radar = Rect(Entity(most_right_agent, 0), Entity(most_right_agent + 7, MyEngine.canvas.down))
-    ennemy_radar_detected = {}
-    for ennemy in ennemy_squads.agents:
-        if MyEngine.general_radar.isEntityInsideMe(ennemy_squads.agents[ennemy]):
-            ennemy_radar_detected[ennemy] = ennemy_squads.agents[ennemy]
 
-    # action = mysquads.assign_target([Entity(6, 1), Entity(6, 3)])
-    # attack targetiing init
-    # myagent_target = MyEngine.assign_target_agent(mysquads.agents, list(ennemy_radar_detected.values()))
-    ennemy_attack = MyEngine.assign_target_agent(Squad(ennemy_radar_detected).agents, list(mysquads.agents.values()))
-    myagent_target = MyEngine.assign_target_agent(mysquads.agents, [ennemy_squads.agents[ennemy_id] for ennemy_id, agent_id in ennemy_attack ])
-    block_zone = []
-    for block in cover:
-        if MyEngine.general_radar.isEntityInsideMe(block):
-            block_zone += [block]
-    
-    # init predator : ennemy who targets my agents
-    my_predator = {}
-    for ennemy, myagent in ennemy_attack:
-        my_predator[myagent] = (my_predator.get(myagent) or []) + [ennemy_squads.agents[ennemy]] 
-    # init predator
-    
-    # init my hide action
-    hide_action = {}
+    # init territory
+    my_territory = []
+    ennemy_territory = []
 
+    for myagent in mysquads.agents.values():
+        my_territory += [myagent.getDomain()]
+
+    for ennemy_agent in ennemy_squads.agents.values():
+        ennemy_territory += [ennemy_agent.getDomain()]
+
+    
+    available_places = MyEngine.computeNotControlledZone(MyEngine.canvas, mysquads.getOrthoPeripheral(), ennemy_squads.getOrthoPeripheral())
+    if DEBUG >= 20:
+        for place in available_places:
+            print(f"{place}",file=sys.stderr, flush=True)
+        print(f"len={len(available_places)}",file=sys.stderr, flush=True)
+    # available_places = MyEngine.substractZoneFromRect(MyEngine.canvas,my_territory)# + ennemy_territory)
+    #available_places = [place for place in available_places if (place not in list(ennemy_squads.agents.values())) and (place not in cover) and (place not in list(mysquads.agents.values()))] # filter places
+    # init territory
+    agent_explorer = {}
+    agent_attacker = {}
     for agent_id in mysquads.agents:
-        if not block_zone:break
+        agent_domain = mysquads.agents[agent_id].getDomain()
+        ennemy_detected = []
+        for ennemy_id in ennemy_squads.agents:
+            if agent_domain.isEntityInsideMe(ennemy_squads.agents[ennemy_id]):
+                ennemy_detected += [ennemy_squads.agents[ennemy_id]]
 
-        if agent_id in my_predator:
-            hide = MyEngine.take_cover(mysquads.agents[agent_id], block_zone, my_predator[agent_id])
-            hide_action[agent_id] = hide
-    
-    # init my hide action
+        if len(ennemy_detected) > 0:
+            can_shoot = mysquads.agents[agent_id].shoot_cooldown == 0
+            can_bomb = mysquads.agents[agent_id].splash_bomb > 0 and (min([mysquads.agents[agent_id].dist(ennemy) for ennemy in ennemy_detected]) <= BOMB_RANGE)
+            weapon = None
 
-    # init my attack
-    my_attacker = [agent_id for agent_id, ennemy_id in myagent_target]
-    attack_action = {}
-    for agent_id, ennemy_id in myagent_target:
-        attack_action[agent_id] = ennemy_id
-    # init my attack
+            # check if multiple kill
+            if can_bomb:
+                victim, target = MyEngine.check_multiple_kill(ennemy_detected, list(mysquads.agents.values()))
+                if victim:
+                    weapon = f"THROW {target}"
 
-    # strategy decision
-    for agent_id in mysquads.agents:
-        # action = f"{agent_id}; "
-        actions = []
-        hide = hide_action.get(agent_id)
-        attack = attack_action.get(agent_id)
-        if attack:
+            if (weapon == None):
+                if can_shoot:
+                    target = mysquads.agents[agent_id].chooseNearestEntity(ennemy_detected)
+                    weapon = f"SHOOT {ennemy_detected[target].agent_id}"
+                
+                else:
+                    agent_explorer[agent_id]=mysquads.agents[agent_id]
+                    continue
+
+            hide = MyEngine.take_cover(mysquads.agents[agent_id], cover, ennemy_detected)
+
+            action = []
             if hide:
-                actions += [f"MOVE {hide}"]
-            actions += [f"SHOOT {attack}"]
+                # MOVE
+                action += [f"MOVE {hide}"]
+            # ATTACK
+            action += [
+                f"{weapon}"
+            ]
+            print(f"{agent_id}; {'; '.join(action)}")
+
         else:
-            if hide:
-                actions += [f"MOVE {hide}"]
-            else:
-                # move forward basic
-                agent =mysquads.agents[agent_id]
-                actions += [f"MOVE {agent.x+2} {agent.y+2}"]
-        print(f"{agent_id}; {'; '.join(actions)}")
+            # Explorer
+            agent_explorer[agent_id]=mysquads.agents[agent_id]
 
-    ## seems to be throw actions
-    # move_action = {}
-    # throw_action = {}
-    # throw_action_agents = MyEngine.assign_target_agent(mysquads.agents, list(ennemy_squads.agents.values()))
-    # for agent_id, target in throw_action_agents:
-    #     throw_action[agent_id] = target
-    # # my_targets = MyEngine.assign_target_agent(mysquads.agents, list(ennemy_squads.agents.values()))
-    # for x in throw_action:
-    #     print(f"{x} {throw_action[x]}", file=sys.stderr, flush=True)
+    explore_action = MyEngine.assign_target(agent_explorer, available_places)
+    for agent_id, target in explore_action:
+        print(f"{agent_id}; MOVE {target}")
+    DEBUG += 1
 
-    # for myagent_id, target in throw_action_agents:
-    #     if not target:
-    #         move_action[myagent_id] = None
-    #         continue
 
-    #     agent = mysquads.agents[myagent_id]
-    #     domain = Rect(Entity(target.x - 4, target.y - 4), Entity(target.x + 4 , target.y + 4))
-    #     valid_spot = []
-    #     for y in range(domain.top, domain.down+1):
-    #         for x in range(domain.left, domain.right+1):
-    #             _entity = Entity(x, y)
-    #                 valid_spot += [_entity]
-    #     valid_spot.sort(key=lambda x:x.dist(agent))
 
-    #     if len(valid_spot) and agent != valid_spot[0]:
-    #         move_action[myagent_id] = valid_spot[0]
-    #     else:
-    #         move_action[myagent_id] = None
 
-    # for agent_id in mysquads.agents.keys():
-    #     actions = []
-    #     if move_action[agent_id]:
-    #         move = f"MOVE {move_action[agent_id]}"
-    #         actions += [move]
-    #     # if Entity(mysquads.agents[agent_id].x , mysquads.agents[agent_id].y) == move_action[agent_id]:
-    #     elif throw_action[agent_id]:
-    #         shoots = f"THROW {throw_action[agent_id].__str__()}"
-    #         actions += [shoots]
-    #     else:
-    #         actions += ["WAIT"]
-        
-        # print(f"{agent_id}; {'; '.join(actions)}")
-        # agent = action[i][0]
-        # target = action[i][1]
-        # print(f"{agent};  MOVE {target[0]} {target[1]}")
-        # agent_id --> shoot_on
-        # shoot_on.wetness += mysquads.agents[agent_id].soaking_power
-        # print(f"{agent_id};  SHOOT {shoot_on.agent_id}")
-    
