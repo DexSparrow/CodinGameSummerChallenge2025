@@ -415,15 +415,21 @@ class MyEngine():
         _spot = (blind_spots[0][1]+2)%4 # reverse side
         return ortho_spot[_spot]
     @classmethod
-    def take_cover(cls, agent:Agent, cover:list[Block], predators:list[Agent]):
+    def take_cover(cls, agent:Agent, cover:list[Block], predators:list[Agent], dist_limi=3):
         # predators : list of Agent attacking me#
         # sort criteria : blocking_strength, distance , 
-        max_height = max(x.height for x in cover)
-        filtered_cover = [x for x in cover if x.height==max_height]
-        filtered_cover.sort(key=lambda n:n.dist(agent))
-        max_cover = filtered_cover[0]
-        spot = cls.take_best_spot(max_cover, forbidden_spot = [Entity(x.x, x.y) for x in predators], predators=predators)
-        return spot
+        # max_height = max(x.height for x in cover)
+        # filtered_cover = [x for x in cover if x.height==max_height]
+        # filtered_cover.sort(key=lambda n:n.dist(agent))
+        # max_cover = filtered_cover[0]
+        # spot = cls.take_best_spot(max_cover, forbidden_spot = [Entity(x.x, x.y) for x in predators], predators=predators)
+        cover = [x for x in cover if x.dist(agent) <= dist_limi]
+        for c in cover:
+            spot = cls.take_best_spot(c, forbidden_spot = [Entity(x.x, x.y) for x in predators], predators=predators)
+            if spot:
+                return spot
+
+        return None
         # cover: Block object list
         # The predators could be a squad Objects, but the squada Objects is not needed so much here
     
@@ -440,7 +446,7 @@ for i in range(agent_data_count):
     # splash_bombs: Number of splash bombs this can throw this game
     agent_id, player, shoot_cooldown, optimal_range, soaking_power, splash_bombs = [int(j) for j in input().split()]
     agent = Agent(agent_id=agent_id, player=player, shoot_cooldown=shoot_cooldown, optimal_range=optimal_range, soaking_power=soaking_power, splash_bombs=splash_bombs)
-    if player == 0:
+    if player == my_id:
         myagents[agent_id]=agent
     else:
         ennemy_agents[agent_id]=agent
@@ -567,7 +573,7 @@ while True:
                     print(f"{agent_id}; MOVE {target}; HUNKER_DOWN")
                     continue
 
-            hide = MyEngine.take_cover(mysquads.agents[agent_id], cover, ennemy_detected)
+            hide = MyEngine.take_cover(mysquads.agents[agent_id], cover, ennemy_detected, dist_limi=mysquads.agents[agent_id].optimal_range + mysquads.agents[agent_id].optimal_range//2)
             # debug-hide
             print(f"{agent_id} hide to {hide}", file=sys.stderr, flush=True)
             # debug-hide
