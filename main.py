@@ -596,6 +596,6 @@ while True:
         print(f"{agent_id}; MOVE {target}")
     DEBUG += 1
 
-
+#SILVER
 
 
