@@ -39,19 +39,19 @@ class Rect:
     left: int
     right: int
     top: int
-    down: int
+    bottom: int
 
     def __init__(self, A: Entity, B: Entity):
         self.left = min(A.x, B.x)
         self.right = max(A.x, B.x)
         self.top = min(A.y, B.y)
-        self.down = max(A.y, B.y)
+        self.bottom = max(A.y, B.y)
 
     def isEntityInsideMe(self, e: Entity):
-        return e.x >= self.left and e.x <= self.right and e.y >= self.top and e.y <= self.down  
+        return e.x >= self.left and e.x <= self.right and e.y >= self.top and e.y <= self.bottom  
 
     def __str__(self):
-        return f"Rect: {self.top} {self.right} {self.down} {self.down}"
+        return f"Rect: {self.top} {self.right} {self.bottom} {self.left}"
 
 class Block(Entity):
     height: int
@@ -108,16 +108,16 @@ class Squad():
         self.agents.pop(agent_id)
 
     def getOrthoPeripheral(self)->dict:
-        # return top right down left
+        # return top right bottom left
         agents = list(self.agents.values())
         agents.sort(key=lambda A:A.x)
         left = agents[0]
         right = agents[-1]
         agents.sort(key=lambda A:A.y)
         top = agents[0]
-        down = agents[0]
+        bottom = agents[0]
 
-        return {"top":top,"right":right,"down":down,"left":left}
+        return {"top":top,"right":right,"bottom":bottom,"left":left}
 
 
 
@@ -126,12 +126,36 @@ class MyEngine():
     forbidden_spot: list[Entity]
     general_radar: Rect
 
+    @classmethod
+    def getTargetNearEntity(cls, reference: Entity, places: list[Entity]):
+            res = places[0]
+            for entity in places:
+                if(reference.dist(entity) < reference.dist(res)):
+                    res = entity
+            return res
 
+    @classmethod
+    def dividePlaces(cls, agentCount :int, places: list[Entity])->list[list[Entity]]:
+        temp = places.copy()
+        temp.sort(key=lambda x:x.dist(Entity(0, 0)))
+
+        S = len(temp)//agentCount
+        if(S*agentCount < len(places)):
+            S+=1
+        
+        res = []
+        for i in range(agentCount):
+            T =[]
+            for j in range(S):
+                if((i*S + j)>=len(temp)):break
+                T += [temp[i*S +  j]]
+            res += [T]
+        return res
 
     @classmethod
     def computeNotControlledZone(cls,zone:Rect, bluePeripheral:dict, redPeripheral:dict)->list[Entity]:
         res = []
-        for y in range(zone.top, zone.down+1):
+        for y in range(zone.top, zone.bottom+1):
             for x in range(zone.left, zone.right+1):
                 entity = Entity(x, y)
                 blue_distance = [] 
@@ -148,7 +172,7 @@ class MyEngine():
     def substractZoneFromRect(cls, A: Rect, zones: list[Rect])->list[Entity]:
         # get all avalaible places after removing zone
         available_places = []
-        for y in range(A.top, A.down+1):
+        for y in range(A.top, A.bottom+1):
             for x in range(A.left, A.right+1):
                 entity = Entity(x, y)
                 available = True
@@ -166,14 +190,14 @@ class MyEngine():
         obstacle = 0
         domain = Rect(Entity(agent.x-domain_surface_pad, agent.y-domain_surface_pad), Entity(agent.x+domain_surface_pad, agent.y+domain_surface_pad))
         max_obstacle = 0
-        for y in range(1, domain.down - domain.top):
+        for y in range(1, domain.bottom - domain.top):
             for x in range(1, domain.right  - domain.left):
                 Y = domain.top + y
                 X = domain.left + x                    
                 R = Rect(Entity(domain.left, domain.top), Entity(X, Y))
                 obstacle = 0
                 for _x in range(R.left, R.right+1):
-                    for _y in range(R.top, R.down+1):
+                    for _y in range(R.top, R.bottom+1):
                         if Entity(_x, _y) in cls.forbidden_spot:
                             obstacle += 1
                 max_obstacle = max(max_obstacle, obstacle)
@@ -190,15 +214,15 @@ class MyEngine():
             for x in range(domain.left, domain.right+1):
                 if Entity(x, domain.top) in forbidden:
                     obstacle += 1
-                if Entity(x, domain.down) in forbidden:
+                if Entity(x, domain.bottom) in forbidden:
                     obstacle += 1
 
-            for y in range(domain.top, domain.down + 1):
+            for y in range(domain.top, domain.bottom + 1):
                 if Entity(domain.right, y) in forbidden:
                     obstacle += 1
                 if Entity(domain.left, y) in forbidden:
                     obstacle += 1
-            perimeter = ((domain.right - domain.left+1) + (domain.down - domain.top+1))*2 - 4
+            perimeter = ((domain.right - domain.left+1) + (domain.bottom - domain.top+1))*2 - 4
             # print(f"{agent.agent_id}:[{surface}] [{perimeter}]{obstacle}", file=sys.stderr, flush=True)
             if obstacle == perimeter:
                 return 1
@@ -212,7 +236,7 @@ class MyEngine():
             rect = target.getDomain(domain_size=1)
             victim = 0
             collateral = 0
-            for y in range(rect.top, rect.down):
+            for y in range(rect.top, rect.bottom):
                 for x in range(rect.left, rect.right):
                     _entity = Entity(x, y)
                     if _entity != target and target in targets:
@@ -387,17 +411,17 @@ class MyEngine():
         if ortho_predator_squad["top"].y < cover.y-1:
             up_cover = Rect(Entity(min(cover.x, ortho_predator_squad["left"].x), cover.y - 2), Entity(max(cover.x, ortho_predator_squad["right"].x), ortho_predator_squad["top"].y))
         if ortho_predator_squad["right"].x > cover.x+1:
-            right_cover = Rect(Entity(cover.x+2, min(cover.y, ortho_predator_squad["top"].y)), Entity(ortho_predator_squad["right"].x, max(cover.y, ortho_predator_squad["down"].y)))
-        if ortho_predator_squad["down"].y > cover.y+1:            
-            down_cover = Rect(Entity(max(cover.x, ortho_predator_squad["right"].x), cover.y + 1), Entity(min(cover.x, ortho_predator_squad["left"].x), ortho_predator_squad["down"].y))
+            right_cover = Rect(Entity(cover.x+2, min(cover.y, ortho_predator_squad["top"].y)), Entity(ortho_predator_squad["right"].x, max(cover.y, ortho_predator_squad["bottom"].y)))
+        if ortho_predator_squad["bottom"].y > cover.y+1:            
+            down_cover = Rect(Entity(max(cover.x, ortho_predator_squad["right"].x), cover.y + 1), Entity(min(cover.x, ortho_predator_squad["left"].x), ortho_predator_squad["bottom"].y))
         if ortho_predator_squad["left"].x < cover.x-1:
-            right_cover = Rect(Entity(cover.x - 2, max(cover.y, ortho_predator_squad["down"].y)), Entity(ortho_predator_squad["left"].x, min(cover.y, ortho_predator_squad["top"].y)))
+            right_cover = Rect(Entity(cover.x - 2, max(cover.y, ortho_predator_squad["bottom"].y)), Entity(ortho_predator_squad["left"].x, min(cover.y, ortho_predator_squad["top"].y)))
 
 
         ortho_cover = [up_cover, right_cover, down_cover, left_cover]
 
         # orthoganally adjacent of Entity
-        # up right down left
+        # up right bottom left
         ortho_spot = cls.get_ortho_spot(cover)
         for _spot in range(4):
             if ortho_cover[_spot] == None:
@@ -423,7 +447,7 @@ class MyEngine():
         # filtered_cover.sort(key=lambda n:n.dist(agent))
         # max_cover = filtered_cover[0]
         # spot = cls.take_best_spot(max_cover, forbidden_spot = [Entity(x.x, x.y) for x in predators], predators=predators)
-        cover = [x for x in cover if x.dist(agent) <= dist_limi]
+        cover = [x for x in cover if min(x.dist(p) for p in predators) <= agent.optimal_range]
         for c in cover:
             spot = cls.take_best_spot(c, forbidden_spot = [Entity(x.x, x.y) for x in predators], predators=predators)
             if spot:
@@ -482,8 +506,8 @@ dont_move_zone = []
 for corner in [
     [0,0],
     [MyEngine.canvas.right - 4, 0],
-    [MyEngine.canvas.right - 4, MyEngine.canvas.down - 4],
-    [0, MyEngine.canvas.down - 4],
+    [MyEngine.canvas.right - 4, MyEngine.canvas.bottom - 4],
+    [0, MyEngine.canvas.bottom - 4],
 ]:
     x,y = corner
     rect = Rect(Entity(x, y), Entity(x+4, y+4))
@@ -591,9 +615,18 @@ while True:
             # Explorer
             agent_explorer[agent_id]=mysquads.agents[agent_id]
 
-    explore_action = MyEngine.assign_target(agent_explorer, available_places)
-    for agent_id, target in explore_action:
-        print(f"{agent_id}; MOVE {target}")
+    if len(agent_explorer):
+        plots = MyEngine.dividePlaces(len(agent_explorer), available_places)
+        counter = 0
+        for agents in agent_explorer.values():
+            target = MyEngine.getTargetNearEntity(agents, plots[counter])
+            print(f"{agents.agent_id}; MOVE {target}")
+            counter += 1
+    else:
+        explore_action = MyEngine.assign_target(agent_explorer, available_places)
+        for agent_id, target in explore_action:
+            print(f"{agent_id}; MOVE {target}")
+    
     DEBUG += 1
 
 #SILVER
