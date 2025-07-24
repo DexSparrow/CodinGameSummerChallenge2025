@@ -2,6 +2,9 @@ import sys
 import math
 
 BOMB_RANGE = 4
+LIFE_SPAN = 100
+
+
 class Entity:None
 class Entity:
     x:int
@@ -34,6 +37,7 @@ class Entity:
                 min_entity = entity
                 min_dist = dist
         return min_entity
+        
     
 class Rect:
     left: int
@@ -60,6 +64,7 @@ class Block(Entity):
         super().__init__(x ,y)
         self.height = height
 
+class Agent:pass
 class Agent(Entity):
     agent_id:int
     player:int
@@ -84,6 +89,23 @@ class Agent(Entity):
             domain_size = self.optimal_range * 2
         return Rect(Entity(self.x - domain_size, self.y - domain_size), Entity(self.x + domain_size, self.y + domain_size))
 
+    def fight(self, opponent: Agent, max_tour: int=-1):
+        if max_tour < 0:
+
+            pass
+        my_life_span = math.ceil(self.wetness / opponent.soaking_power)
+
+        my_damage = self.wetness + (self.shoot_cooldown == 0 and self.soaking_power * max_tour or 0)
+        opp_damage = opponent.wetness + (opponent.shoot_cooldown == 0 and opponent.soaking_power * max_tour or 0)
+        return my_damage <= opp_damage # 1 if win else 0
+
+    def computeAttack(self, cover: Block, dist_to_target: int)->int:
+        if dist_to_target > self.optimal_range * 2:
+            return 0
+        return (self.soaking_power * [1, 0.5][dist_to_target >= (self.optimal_range * 2)])*(cover != None and [0.5, 0.25][cover.height-1] or 1)
+
+
+class Squad:pass
 class Squad():
     agents: dict
 
@@ -119,12 +141,38 @@ class Squad():
 
         return {"top":top,"right":right,"bottom":bottom,"left":left}
 
+    def rankWinLoseGame(self, Ennemy: Squad):
+        # abandon
+        res = []
+        for agent_id in self.agents:
+            win = 0
+            for ennemy_id in Ennemy.agents.values():
+                fight = self.agents[agent_id].fight(Ennemy.agents[ennemy_id])
+                if fight:
+                    win+=1
+            res += [[win, agent_id]]
+        res.sort(key=lambda x:-x[0])
+        return [self.agents[agent_id] for _, agent_id in res]
 
+    def rankWetness(self):
+        res=[agent_id for agent_id in self.agents]
+        res.sort(key=lambda x:self.agents[x].wetness)
+        return res
 
 class MyEngine():
     canvas : Rect
     forbidden_spot: list[Entity]
     general_radar: Rect
+    cover: list[Block]
+
+    @classmethod
+    def miniPathFinding(cls, origin: Entity, target:Entity, forbidden_spot: list[Entity])->Entity:
+        res = None
+        for spot in cls.get_ortho_spot(origin):
+            if cls.canvas.isEntityInsideMe(spot) and spot not in forbidden_spot:
+                if res == None or target.dist(res) > target.dist(spot):
+                    res = spot
+        return res
 
     @classmethod
     def getTargetNearEntity(cls, reference: Entity, places: list[Entity]):
@@ -377,19 +425,24 @@ class MyEngine():
         return res        
 
     @classmethod
-    def get_coverage(cls, cover:Block, predator:Agent, dir_prey_cover:int):
+    def get_coverage(cls, cover:Block, predator:Agent, dir_prey_cover:int)->int:
+        """ Return if the agent assuming facing [dir_prey_cover] to block is covered from [predator]"""
+        # Verbose : it's from agent POV -> Agent is facing  cover [dir_prey_cover]
+        if cover.pythagore_dist(predator) <= 2:
+            return 0
         up_cover = Rect(Entity(cover.x-2, cover.y-1), Entity(cover.x+2, cover.y-3))
         right_cover = Rect(Entity(cover.x-1, cover.y-2), Entity(cover.x-3, cover.y+2))
         down_cover = Rect(Entity(cover.x+2, cover.y+1), Entity(cover.x-2, cover.y+3))
         left_cover = Rect(Entity(cover.x+1, cover.y-2), Entity(cover.x+3, cover.y+2))
 
         ortho_cover = [up_cover, right_cover, down_cover, left_cover]
-        if cover.pythagore_dist(predator) > 2 and ortho_cover[dir_prey_cover].isEntityInsideMe(predator):
+        if ortho_cover[dir_prey_cover].isEntityInsideMe(predator):
             return 1
         return 0
 
     @classmethod
-    def get_ortho_spot(cls, spot)->list[Entity]:
+    def get_ortho_spot(cls, spot:Entity)->list[Entity]:
+        # return spot in order :top right bottom left
         return [Entity(spot.x + x, spot.y + y) for x,y in [[0,-1],[1,0], [0,1], [-1,0]]]
 
     @classmethod
@@ -438,25 +491,60 @@ class MyEngine():
         blind_spots.sort(key=lambda x:-x[0]) # Most blind spot
         _spot = (blind_spots[0][1]+2)%4 # reverse side
         return ortho_spot[_spot]
+    
     @classmethod
-    def take_cover(cls, agent:Agent, cover:list[Block], predators:list[Agent], dist_limi=3):
-        # predators : list of Agent attacking me#
-        # sort criteria : blocking_strength, distance , 
-        # max_height = max(x.height for x in cover)
-        # filtered_cover = [x for x in cover if x.height==max_height]
-        # filtered_cover.sort(key=lambda n:n.dist(agent))
-        # max_cover = filtered_cover[0]
-        # spot = cls.take_best_spot(max_cover, forbidden_spot = [Entity(x.x, x.y) for x in predators], predators=predators)
-        cover = [x for x in cover if min(x.dist(p) for p in predators) <= agent.optimal_range]
+    def take_cover(cls, agent:Agent, cover:list[Block], predators:list[Agent]):
+        max_spot = None
         for c in cover:
             spot = cls.take_best_spot(c, forbidden_spot = [Entity(x.x, x.y) for x in predators], predators=predators)
             if spot:
-                return spot
-
-        return None
-        # cover: Block object list
+                if spot.dist(agent) < (min(spot.dist(p) for p in predators)-1):
+                    if max_spot == None or agent.dist(spot) < agent.dist(max_spot):
+                        max_spot = spot
+                # return spot
+        return max_spot
         # The predators could be a squad Objects, but the squada Objects is not needed so much here
-    
+
+    @classmethod
+    def agentAttack(cls, attacker: Agent, preys: list[Agent])->str:
+        # return the best attack for a given prey 
+        # we assume that the prey are reachable
+        weapon = [] # SHOOT or THROW
+        dist_agent_to_ennemy = {} # store dist from agent to ennemy
+        for prey in preys:
+            dist_agent_to_ennemy[prey.agent_id] = prey.dist(attacker)
+
+
+        if attacker.splash_bomb > 0 and min(list(dist_agent_to_ennemy.values()))<=4:
+            victim,target = cls.check_multiple_kill(preys, [attacker])
+            damage = victim * 30
+            weapon += [[f"THROW {target}", damage]]
+
+        if attacker.shoot_cooldown == 0:
+            # choose prey
+            max_damage = -1
+            target = None
+            for prey in preys:
+                cover = None
+                ortho_spot= cls.get_ortho_spot(prey)
+                for _spot in range(4):
+                    spot = ortho_spot[_spot]
+                    for block in cls.cover:
+                        if block==spot and cls.get_coverage(block, attacker,(_spot + 2)%4):
+                            cover = block
+                            break
+                    if cover:break
+                damage = attacker.computeAttack(cover=cover, dist_to_target=dist_agent_to_ennemy[prey.agent_id])
+                if damage > max_damage:
+                    max_damage = max(max_damage, damage)
+                    target = prey.agent_id
+            # Forget about this a little :check soakin_power of prey because we want to eliminate the strongest as fast as we can
+            weapon += [[f"SHOOT {target}", max_damage]]
+        weapon.sort(key=lambda x:-x[1])        
+        return weapon[0][0]
+
+
+
 my_id = int(input())  # Your player id (0 or 1)
 agent_data_count = int(input())  # Total number of agents in the game
 myagents = {}
@@ -479,12 +567,12 @@ for i in range(agent_data_count):
 
 mysquads = Squad(myagents)
 ennemy_squads = Squad(ennemy_agents)
-cover = [] # Block object list of obstacles
 
 width, height = [int(i) for i in input().split()]
 
 MyEngine.canvas = Rect(Entity(0,0), Entity(width-1, height-1))
 MyEngine.forbidden_spot = []
+MyEngine.cover = [] # Block object list of obstacles
 
 
 
@@ -497,9 +585,9 @@ for i in range(height):
         y = int(inputs[3*j+1])
         tile_type = int(inputs[3*j+2])
         if tile_type != 0:
-            cover += [Block(x=x, y=y, height=tile_type)]
+            MyEngine.cover += [Block(x=x, y=y, height=tile_type)]
             MyEngine.forbidden_spot += [Entity(x=x, y=y)]
-# cover.sort(key=lambda c:-c.height)
+# MyEngine.cover.sort(key=lambda c:-c.height)
 # game loop
 
 dont_move_zone = []
@@ -559,74 +647,101 @@ while True:
 
     
     available_places = MyEngine.computeNotControlledZone(MyEngine.canvas, mysquads.getOrthoPeripheral(), ennemy_squads.getOrthoPeripheral())
-    # available_places = MyEngine.substractZoneFromRect(MyEngine.canvas,my_territory)# + ennemy_territory)
-    #available_places = [place for place in available_places if (place not in list(ennemy_squads.agents.values())) and (place not in cover) and (place not in list(mysquads.agents.values()))] # filter places
-    # init territory
-    agent_explorer = {}
-    agent_attacker = {}
-    for agent_id in mysquads.agents:
-        agent_domain = mysquads.agents[agent_id].getDomain()
-        ennemy_detected = []
+
+
+    myagents = mysquads.rankWetness()
+    plots = MyEngine.dividePlaces(len(mysquads.agents), available_places)
+    plot_iterator = 0
+    forbidden_spot = MyEngine.cover.copy()
+
+    for agent_id in myagents:
+        my_predator = []
+        my_available_places = [spot for spot in plots[plot_iterator] if spot not in forbidden_spot]
+        dist_agent_to_ennemy = {} # store dist from agent to ennemy
         for ennemy_id in ennemy_squads.agents:
-            if agent_domain.isEntityInsideMe(ennemy_squads.agents[ennemy_id]):
-                ennemy_detected += [ennemy_squads.agents[ennemy_id]]
-        print(f"{agent_id} detected ennemy {[str(x.agent_id) for x in ennemy_detected]}", file=sys.stderr, flush=True)
+            dist = ennemy_squads.agents[ennemy_id].dist(mysquads.agents[agent_id])
+            dist_agent_to_ennemy[ennemy_id] = dist
+            if ((ennemy_squads.agents[ennemy_id].shoot_cooldown >= 1) and dist<=ennemy_squads.agents[ennemy_id].optimal_range*2 or (ennemy_squads.agents[ennemy_id].splash_bomb and dist<=4)):
+                my_predator += [ ennemy_id ]
 
-        if len(ennemy_detected) > 0:
-            can_shoot = mysquads.agents[agent_id].shoot_cooldown == 0
-            can_bomb = mysquads.agents[agent_id].splash_bomb > 0 and (min([mysquads.agents[agent_id].dist(ennemy) for ennemy in ennemy_detected]) <= BOMB_RANGE)
-            weapon = None
-
-            # check if multiple kill
-            if can_bomb:
-                res = MyEngine.check_multiple_kill(ennemy_detected, list(mysquads.agents.values()))
-                if res != None:
-                    victim, target = res
-                    if victim:
-                        weapon = f"THROW {target}"
-
-            if (weapon == None):
-                if can_shoot:
-                    target = mysquads.agents[agent_id].chooseNearestEntity(ennemy_detected)
-                    weapon = f"SHOOT {ennemy_detected[target].agent_id}"
-                
-                else:
-                    # agent_explorer[agent_id]=mysquads.agents[agent_id]
-                    explore_action = MyEngine.assign_target({agent_id: mysquads.agents[agent_id]}, available_places)
-                    agent_id, target = explore_action[0]
-                    print(f"{agent_id}; MOVE {target}; HUNKER_DOWN")
-                    continue
-
-            hide = MyEngine.take_cover(mysquads.agents[agent_id], cover, ennemy_detected, dist_limi=mysquads.agents[agent_id].optimal_range + mysquads.agents[agent_id].optimal_range//2)
-            # debug-hide
-            print(f"{agent_id} hide to {hide}", file=sys.stderr, flush=True)
-            # debug-hide
+        # if damage_from predator > mywetness: avoid
+        my_damage = sum(max(30 * int(ennemy_squads.agents[ennemy_id].splash_bomb>0), ennemy_squads.agents[ennemy_id].computeAttack(cover=None, dist_to_target=dist_agent_to_ennemy[ennemy_id])) for ennemy_id in my_predator)
+        if (my_damage + mysquads.agents[agent_id].wetness) >= LIFE_SPAN:
+            # NOTCHECK
+            print(f"{agent_id} Avoid", file=sys.stderr, flush=True)    
             action = []
-            if hide:
-                # MOVE
-                action += [f"MOVE {hide}"]
-            # ATTACK
-            action += [
-                f"{weapon}"
-            ]
+            message = f"Avoid {' '.join(str(ennemy_squads.agents[p].agent_id) for p in my_predator)}"
+            # avoid move to place where least damage # HUNKER DOWN and expand
+            target = MyEngine.getTargetNearEntity(mysquads.agents[agent_id], my_available_places)
+            action += [f"MOVE {target}"]
+            action += ["HUNKER_DOWN"]
+            action += [f"MESSAGE {message}"]
+            forbidden_spot += [target]
             print(f"{agent_id}; {'; '.join(action)}")
-
         else:
-            # Explorer
-            agent_explorer[agent_id]=mysquads.agents[agent_id]
+            my_prey = []
+            for ennemy_id in ennemy_squads.agents:
+                dist = dist_agent_to_ennemy[ennemy_id]
+                if ((mysquads.agents[agent_id].shoot_cooldown == 0) and (dist<=mysquads.agents[agent_id].optimal_range*2 or (mysquads.agents[agent_id].splash_bomb and dist<=4))):
+                    my_prey += [ ennemy_id ]
 
-    if len(agent_explorer):
-        plots = MyEngine.dividePlaces(len(agent_explorer), available_places)
-        counter = 0
-        for agents in agent_explorer.values():
-            target = MyEngine.getTargetNearEntity(agents, plots[counter])
-            print(f"{agents.agent_id}; MOVE {target}")
-            counter += 1
-    else:
-        explore_action = MyEngine.assign_target(agent_explorer, available_places)
-        for agent_id, target in explore_action:
-            print(f"{agent_id}; MOVE {target}")
-    
+            # context : A prey mean I can attack it now (int this turn)
+            if len(my_prey) <= 0 and len(my_predator)<=0:
+                # explore
+                action = []
+                print(f"{agent_id} Explore", file=sys.stderr, flush=True)    
+                target = MyEngine.getTargetNearEntity(mysquads.agents[agent_id], my_available_places)
+                next_move = MyEngine.miniPathFinding(origin=mysquads.agents[agent_id], target=target, forbidden_spot=forbidden_spot )
+                action += [f"MOVE {next_move}"]
+                action += [f"MESSAGE Explore {next_move} {target}"]
+                print(f"{agent_id}; {'; '.join(action)}")
+                forbidden_spot += [next_move]
+
+            elif len(my_prey) > 0 and len(my_predator)<=0:
+                print(f"{agent_id} Attack", file=sys.stderr, flush=True)    
+                # attack
+                action = []
+                weapon = MyEngine.agentAttack(mysquads.agents[agent_id], [ennemy_squads.agents[prey_id] for prey_id in my_prey])
+                action += [f"{weapon}"]
+                action += [f"MESSAGE {weapon}"]
+                print(f"{agent_id}; {'; '.join(action)}")
+            elif len(my_prey) <= 0 and len(my_predator) > 0:
+                # NOTCHECK
+                # hide while explore
+                action = []
+                print(f"{agent_id} Hide while explore", file=sys.stderr, flush=True)    
+                target = MyEngine.getTargetNearEntity(mysquads.agents[agent_id], my_available_places)
+                next_move = MyEngine.miniPathFinding(origin=mysquads.agents[agent_id], target=target, forbidden_spot=forbidden_spot )
+                if next_move:
+                    action += [f"MOVE {next_move}"]
+                    forbidden_spot += [next_move]
+                action += ["HUNKER_DOWN"]
+                action += [f"MESSAGE HideAndExplore {next_move}"]
+                print(f"{agent_id}; {'; '.join(action)}")
+
+            elif len(my_prey) > 0 and len(my_predator) > 0:
+                # NOTCHECK
+                # hide and attack
+                action = []
+                print(f"{agent_id} Hide and attack", file=sys.stderr, flush=True)    
+                hide_spot = MyEngine.take_cover(agent=mysquads.agents[agent_id], cover=MyEngine.cover.copy(), predators=[ennemy_squads.agents[x] for x in my_predator])                
+                if hide_spot:
+                    next_move = MyEngine.miniPathFinding(origin=mysquads.agents[agent_id], target=hide_spot, forbidden_spot=forbidden_spot)                     
+                    forbidden_spot += [next_move]
+                    move = f"MOVE {next_move}"
+                    action += [move]
+
+                weapon = MyEngine.agentAttack(mysquads.agents[agent_id], [ennemy_squads.agents[prey_id] for prey_id in my_prey])
+                if weapon:
+                    action += [f"{weapon}"]
+                action += [f"MESSAGE {hide_spot and 'HIDE TO '+str(hide_spot) or ''} {weapon and weapon or ''}"]
+                print(f"{agent_id}; {'; '.join(action)}")
+            else: # There is nothing here xD
+                # NOTCHECK
+                pass
+
+        plot_iterator += 1
+
     DEBUG += 1
 
 #SILVER
