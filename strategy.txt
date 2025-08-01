@@ -1,6 +1,7 @@
 Control territory and attacking ennemy
 
 
+
 [Control territory]:
     - Explore (left or right) (Squad context)
         -> try to fill territory
