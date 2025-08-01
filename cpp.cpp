@@ -8,7 +8,7 @@
 
 using namespace std;
 
-#define TEST 1
+#define TEST 0
 #ifndef TEST
 #define TEST 0
 #endif
@@ -550,14 +550,10 @@ int main()
         }
 
         // Check my_squads
-        my_squad.deleteAgent(1);
         cerr << "My SQUAD CHECK" <<endl;
         for(map <int, Agent>::iterator iter=my_squad.agents.begin(); iter != my_squad.agents.end(); iter++){
             cerr << iter->second<<endl;
         }
-        exit(0);        
-        // update squad check survivor
-
 
 
 
